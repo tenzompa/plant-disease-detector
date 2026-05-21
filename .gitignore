@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.env
+
+# Notebook checkpoints
+.ipynb_checkpoints/
+
+# Data & large artifacts
+data/raw/
+data/plantvillage/
+*.zip
+Archiv.zip
+
+# Trained models (the small numeric pkl is kept; large vision checkpoints are not)
+flower-vit-custom/
+plant-disease-vit/
+plant_disease_vit_logs/
+*.bin
+*.safetensors
+
+# OS junk
+.DS_Store

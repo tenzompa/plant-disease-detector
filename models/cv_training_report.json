@@ -1,0 +1,35 @@
+{
+  "final_eval": {
+    "eval_loss": 0.1720,
+    "eval_accuracy": 0.9502,
+    "eval_precision": 0.9534,
+    "eval_recall": 0.9502,
+    "eval_f1": 0.9505,
+    "eval_runtime_seconds": 6.53,
+    "eval_samples_per_second": 30.76
+  },
+  "per_epoch": {
+    "epoch_1": {"train_loss": 0.6332, "eval_loss": 0.4074, "eval_accuracy": 0.8955, "eval_precision": 0.9298, "eval_recall": 0.8955, "eval_f1": 0.9003},
+    "epoch_2": {"train_loss": 0.1368, "eval_loss": 0.2052, "eval_accuracy": 0.9502, "eval_precision": 0.9539, "eval_recall": 0.9502, "eval_f1": 0.9507},
+    "epoch_3": {"train_loss": 0.0121, "eval_loss": 0.1720, "eval_accuracy": 0.9502, "eval_precision": 0.9534, "eval_recall": 0.9502, "eval_f1": 0.9505}
+  },
+  "best_epoch": 3,
+  "classes": [
+    "Apple___Apple_scab", "Apple___Black_rot", "Apple___healthy",
+    "Corn___Common_rust", "Corn___healthy",
+    "Pepper___Bacterial_spot", "Pepper___healthy",
+    "Potato___Early_blight", "Potato___Late_blight", "Potato___healthy",
+    "Tomato___Bacterial_spot", "Tomato___Early_blight",
+    "Tomato___Late_blight", "Tomato___Leaf_Mold", "Tomato___healthy"
+  ],
+  "model_id": "tashiten/plant-disease-vit",
+  "base_model": "google/vit-base-patch16-224",
+  "epochs": 3,
+  "batch_size": 8,
+  "lr": 3e-4,
+  "training_runtime_seconds": 224.4,
+  "training_samples_total": 1005,
+  "training_samples_per_class": 67,
+  "test_split_pct": 20,
+  "note": "Local Mac training run, MAX_IMAGES_PER_CLASS=67 to keep MPS training under 5 minutes. Subset of 32k PlantVillage images (15-class subset). Pushed to tashiten/plant-disease-vit on 2026-05-20."
+}

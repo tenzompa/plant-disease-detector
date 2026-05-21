@@ -1,0 +1,44 @@
+{
+  "rows": 3750,
+  "disease_classes": [
+    "Apple___Apple_scab",
+    "Apple___Black_rot",
+    "Apple___healthy",
+    "Corn___Common_rust",
+    "Corn___healthy",
+    "Pepper___Bacterial_spot",
+    "Pepper___healthy",
+    "Potato___Early_blight",
+    "Potato___Late_blight",
+    "Potato___healthy",
+    "Tomato___Bacterial_spot",
+    "Tomato___Early_blight",
+    "Tomato___Late_blight",
+    "Tomato___Leaf_Mold",
+    "Tomato___healthy"
+  ],
+  "crops": [
+    "Apple",
+    "Corn",
+    "Pepper",
+    "Potato",
+    "Tomato"
+  ],
+  "feature_columns": [
+    "N",
+    "P",
+    "K",
+    "temperature",
+    "humidity",
+    "ph",
+    "rainfall",
+    "disease"
+  ],
+  "target_regression": "risk_score",
+  "target_classification": "risk_category",
+  "sources": [
+    "Kaggle 'Crop Recommendation Dataset' (Atharva Ingle) \u2014 schema/ranges",
+    "Agrios, Plant Pathology 5th ed. \u2014 disease-condition windows",
+    "PlantVillage class catalogue \u2014 disease labels"
+  ]
+}

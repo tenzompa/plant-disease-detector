@@ -1,0 +1,15 @@
+gradio
+transformers>=4.40,<5.0
+tokenizers<0.21
+huggingface_hub<1.0
+datasets<4.0
+numpy<2.0
+torch
+torchvision
+scikit-learn
+pandas
+matplotlib
+seaborn
+pillow
+openai
+joblib

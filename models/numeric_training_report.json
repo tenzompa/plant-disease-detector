@@ -1,0 +1,108 @@
+{
+  "iteration_1": {
+    "LinearRegression": {
+      "rmse_mean": 24.597180658998745,
+      "rmse_std": 0.5990531148938699,
+      "r2_mean": 0.037999634590108335
+    },
+    "RandomForest_200": {
+      "rmse_mean": 24.205746538256186,
+      "rmse_std": 0.864203137651007,
+      "r2_mean": 0.06800714664008115
+    }
+  },
+  "iteration_2": {
+    "RandomForest_tuned": {
+      "rmse_mean": 8.990995642291763,
+      "rmse_std": 0.29689479878069125,
+      "r2_mean": 0.8711777669828213
+    },
+    "HistGradientBoosting": {
+      "rmse_mean": 6.413938143785304,
+      "rmse_std": 0.1574445552315831,
+      "r2_mean": 0.934580669340644
+    }
+  },
+  "hold_out": {
+    "rmse": 6.145116094911901,
+    "mae": 4.740832022039666,
+    "r2": 0.9387504383754938,
+    "per_disease": [
+      {
+        "disease": "Apple___Apple_scab",
+        "mean": 5.8,
+        "max": 14.84
+      },
+      {
+        "disease": "Apple___Black_rot",
+        "mean": 4.83,
+        "max": 13.09
+      },
+      {
+        "disease": "Apple___healthy",
+        "mean": 3.26,
+        "max": 9.32
+      },
+      {
+        "disease": "Corn___Common_rust",
+        "mean": 4.94,
+        "max": 14.23
+      },
+      {
+        "disease": "Corn___healthy",
+        "mean": 3.55,
+        "max": 8.68
+      },
+      {
+        "disease": "Pepper___Bacterial_spot",
+        "mean": 5.88,
+        "max": 15.59
+      },
+      {
+        "disease": "Pepper___healthy",
+        "mean": 3.2,
+        "max": 9.85
+      },
+      {
+        "disease": "Potato___Early_blight",
+        "mean": 5.62,
+        "max": 16.6
+      },
+      {
+        "disease": "Potato___Late_blight",
+        "mean": 6.12,
+        "max": 22.98
+      },
+      {
+        "disease": "Potato___healthy",
+        "mean": 3.24,
+        "max": 8.3
+      },
+      {
+        "disease": "Tomato___Bacterial_spot",
+        "mean": 5.75,
+        "max": 20.7
+      },
+      {
+        "disease": "Tomato___Early_blight",
+        "mean": 4.32,
+        "max": 11.85
+      },
+      {
+        "disease": "Tomato___Late_blight",
+        "mean": 5.48,
+        "max": 26.66
+      },
+      {
+        "disease": "Tomato___Leaf_Mold",
+        "mean": 5.95,
+        "max": 21.8
+      },
+      {
+        "disease": "Tomato___healthy",
+        "mean": 3.17,
+        "max": 12.3
+      }
+    ]
+  }
+}

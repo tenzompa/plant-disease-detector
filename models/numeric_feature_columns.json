@@ -1,0 +1,45 @@
+{
+  "feature_columns": [
+    "N",
+    "P",
+    "K",
+    "temperature",
+    "humidity",
+    "ph",
+    "rainfall",
+    "temp_humidity_index",
+    "n_balance",
+    "disease"
+  ],
+  "numeric_columns": [
+    "N",
+    "P",
+    "K",
+    "temperature",
+    "humidity",
+    "ph",
+    "rainfall",
+    "temp_humidity_index",
+    "n_balance"
+  ],
+  "categorical_columns": [
+    "disease"
+  ],
+  "disease_classes": [
+    "Apple___Apple_scab",
+    "Apple___Black_rot",
+    "Apple___healthy",
+    "Corn___Common_rust",
+    "Corn___healthy",
+    "Pepper___Bacterial_spot",
+    "Pepper___healthy",
+    "Potato___Early_blight",
+    "Potato___Late_blight",
+    "Potato___healthy",
+    "Tomato___Bacterial_spot",
+    "Tomato___Early_blight",
+    "Tomato___Late_blight",
+    "Tomato___Leaf_Mold",
+    "Tomato___healthy"
+  ]
+}
