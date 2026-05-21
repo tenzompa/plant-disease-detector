@@ -383,14 +383,37 @@ def _diagnosis_markdown(disease_label: str, risk: float, category: str) -> str:
 # End-to-end pipeline
 # ---------------------------------------------------------------------------
 
+def _pretty_json(value) -> str:
+    """Render dictionaries/lists as plain text instead of heavy JSON UI widgets."""
+    try:
+        return json.dumps(value, indent=2, ensure_ascii=False)
+    except Exception:
+        return str(value)
+
+
+def _format_scores(pred: dict) -> str:
+    """Render model score dictionaries as stable plain text for Gradio tabs."""
+    if not pred:
+        return "Waiting for diagnosis..."
+
+    lines = []
+    for label, score in pred.items():
+        try:
+            lines.append(f"{_short_label(label)}: {float(score) * 100:.2f}%")
+        except Exception:
+            lines.append(f"{label}: {score}")
+
+    return "\n".join(lines)
+
+
 def run_pipeline(image_path, user_text):
     if image_path is None:
         return (
             "⚠️ Please upload a leaf image to start.",
-            {},
-            {},
-            {"status": "No image uploaded."},
-            {"status": "No image uploaded."},
+            "Waiting for diagnosis...",
+            "Waiting for diagnosis...",
+            "No image uploaded.",
+            "No image uploaded.",
             0.0,
             "Low",
             "",
@@ -413,10 +436,10 @@ def run_pipeline(image_path, user_text):
         env = {"error": str(exc)}
         return (
             "",
-            vit_pred,
-            clip_pred,
-            openai_pred,
-            env,
+            _format_scores(vit_pred),
+            _format_scores(clip_pred),
+            _pretty_json(openai_pred),
+            _pretty_json(env),
             0.0,
             "Low",
             f"❌ Extraction error: {exc}",
@@ -428,10 +451,10 @@ def run_pipeline(image_path, user_text):
     except Exception as exc:
         return (
             "",
-            vit_pred,
-            clip_pred,
-            openai_pred,
-            env,
+            _format_scores(vit_pred),
+            _format_scores(clip_pred),
+            _pretty_json(openai_pred),
+            _pretty_json(env),
             0.0,
             "Low",
             f"❌ Risk error: {exc}",
@@ -447,10 +470,10 @@ def run_pipeline(image_path, user_text):
 
     return (
         headline,
-        vit_pred,
-        clip_pred,
-        openai_pred,
-        env,
+        _format_scores(vit_pred),
+        _format_scores(clip_pred),
+        _pretty_json(openai_pred),
+        _pretty_json(env),
         round(risk, 1),
         cat,
         plan,
@@ -591,23 +614,25 @@ with gr.Blocks(title="Plant Disease Detector") as demo:
                     )
 
                     with gr.Row():
-                        vit_out = gr.Label(
+                        vit_out = gr.Textbox(
                             label="Custom ViT (fine-tuned on PlantVillage)",
-                            num_top_classes=3,
-                            value={},
+                            lines=6,
+                            value="Waiting for diagnosis...",
+                            interactive=False,
                         )
 
-                        clip_out = gr.Label(
+                        clip_out = gr.Textbox(
                             label="CLIP zero-shot (openai/clip-vit-large-patch14)",
-                            num_top_classes=3,
-                            value={},
+                            lines=6,
+                            value="Waiting for diagnosis...",
+                            interactive=False,
                         )
 
-                    oai_out = gr.JSON(
+                    oai_out = gr.Textbox(
                         label="OpenAI vision (gpt-4o-mini)",
-                        value={"status": "Waiting for diagnosis..."},
-                        elem_classes=["json-holder"],
-                        **JSON_HEIGHT_KW,
+                        lines=8,
+                        value="Waiting for diagnosis...",
+                        interactive=False,
                     )
 
                 # ===== Tab 3 — Pipeline details =====
@@ -618,11 +643,11 @@ with gr.Blocks(title="Plant Disease Detector") as demo:
                         "numeric risk model consumes."
                     )
 
-                    env_out = gr.JSON(
+                    env_out = gr.Textbox(
                         label="Extracted environmental conditions",
-                        value={"status": "Waiting for diagnosis..."},
-                        elem_classes=["json-holder"],
-                        **JSON_HEIGHT_KW,
+                        lines=8,
+                        value="Waiting for diagnosis...",
+                        interactive=False,
                     )
 
     gr.Markdown("### 🧪 Example scenarios")
