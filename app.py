@@ -526,7 +526,7 @@ def run_pipeline(image_path, user_text):
 EXAMPLES = [
     [
         "example_images/tomato_late_blight.jpg",
-        "Tomatoes outdoors in Zurich, ~18°C, 92% humidity, light rain almost every day, soil pH 6.0, low fertiliser.",
+        "Tomatoes outdoors in Zurich, 18°C, 92% humidity, soil pH 6.0, rainfall 80 mm/month, N 70 ppm, P 50 ppm, K 50 ppm, low fertiliser.",
     ],
     [
         "example_images/tomato_healthy.jpg",
