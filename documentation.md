@@ -307,7 +307,7 @@ side-by-side in the *Vision model comparison* tab of the app:
 |---|---|---|---|
 | `tashiten/plant-disease-vit` | Custom fine-tune (ViT-base, 15 classes) | `cv_predict()` at [`app.py`, lines 198-202](app.py#L198-L202) | **Primary** — its top-1 label is what feeds the numeric model and the LLM treatment prompt |
 | `openai/clip-vit-large-patch14` | Open-source zero-shot | `clip_predict()` at [`app.py`, lines 205-209](app.py#L205-L209) | Baseline that has never seen PlantVillage — sanity check |
-| OpenAI `gpt-4o-mini` vision | Closed-source LLM with vision | `openai_vision_predict()` at [`app.py`, lines 212-245](app.py#L212-L245) | Independent expert opinion in JSON form |
+| OpenAI `gpt-4o-mini` vision | Closed-source LLM with vision | `openai_vision_predict()` at [`app.py`, lines 212-250](app.py#L212-L250) | Independent expert opinion in JSON form |
 
 Qualitative observations from the deployed app:
 - On the *Tomato Late_blight* example, the **custom ViT is sometimes wrong**
