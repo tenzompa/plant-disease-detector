@@ -1,4 +1,4 @@
-gradio>=5.9,<6.0
+gradio>=5.9
 transformers>=4.40,<5.0
 tokenizers<0.21
 huggingface_hub<1.0
@@ -11,5 +11,5 @@ pandas
 matplotlib
 seaborn
 pillow
-openai
+openai>=1.66.0
 joblib

@@ -224,20 +224,23 @@ def openai_vision_predict(image_path: str) -> dict:
         + '{"top1":"...","top3":["...","...","..."],"reason":"short note"}'
     )
 
-    resp = client.responses.create(
-        model=OPENAI_MODEL,
-        input=[
-            {
-                "role": "user",
-                "content": [
-                    {"type": "input_text", "text": prompt},
-                    {"type": "input_image", "image_url": _image_to_data_url(image_path)},
-                ],
-            }
-        ],
-        temperature=0,
-        max_output_tokens=200,
-    )
+    try:
+        resp = client.responses.create(
+            model=OPENAI_MODEL,
+            input=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text", "text": prompt},
+                        {"type": "input_image", "image_url": _image_to_data_url(image_path)},
+                    ],
+                }
+            ],
+            temperature=0,
+            max_output_tokens=200,
+        )
+    except Exception as exc:
+        return {"error": f"OpenAI vision call failed: {exc}"}
 
     try:
         return _parse_json(resp.output_text)

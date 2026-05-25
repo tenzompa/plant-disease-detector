@@ -59,16 +59,16 @@ user free text ─► NLP-extract ─► env JSON ──────┘         
 disease class ────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-The integration is implemented in `run_pipeline()` at [`app.py`, lines 466-519](app.py#L466-L519).
+The integration is implemented in `run_pipeline()` at [`app.py`, lines 469-522](app.py#L469-L522).
 
 **Integration flow, explicit:**
 
-1. **image ➜ ViT disease prediction** — `cv_predict()` at [`app.py`, lines 198-202](app.py#L198-L202) returns the top-3 ViT disease scores; `run_pipeline()` at [`app.py`, line 483](app.py#L483) selects the top-1 disease label.
+1. **image ➜ ViT disease prediction** — `cv_predict()` at [`app.py`, lines 198-202](app.py#L198-L202) returns the top-3 ViT disease scores; `run_pipeline()` at [`app.py`, line 486](app.py#L486) selects the top-1 disease label.
 
-2. **disease ➜ feature for numeric model** — the top-1 label becomes a one-hot column of the regression model (see `compute_risk()` at [`app.py`, lines 307-337](app.py#L307-L337)).
-3. **user text ➜ LLM-extracted environment values ➜ numeric model** — `extract_conditions()` at [`app.py`, lines 264-299](app.py#L264-L299) turns the free text into a 7-key JSON; those values become the numeric features.
+2. **disease ➜ feature for numeric model** — the top-1 label becomes a one-hot column of the regression model (see `compute_risk()` at [`app.py`, lines 310-340](app.py#L310-L340)).
+3. **user text ➜ LLM-extracted environment values ➜ numeric model** — `extract_conditions()` at [`app.py`, lines 267-302](app.py#L267-L302) turns the free text into a 7-key JSON; those values become the numeric features.
 4. **disease + environment ➜ risk score** — the regression model returns a 0–100 risk and a Low/Medium/High category.
-5. **disease + risk score ➜ LLM treatment plan** — `treatment_plan()` at [`app.py`, lines 356-381](app.py#L356-L381) writes risk-scaled treatment actions.
+5. **disease + risk score ➜ LLM treatment plan** — `treatment_plan()` at [`app.py`, lines 359-384](app.py#L359-L384) writes risk-scaled treatment actions.
 
 
 ---
@@ -102,9 +102,9 @@ Swiss Agroscope disease bulletins).
 
 #### 2A.2 Preprocessing and Features
 - Cleaning steps:
-  - Missing or invalid values are replaced with defaults; humidity and pH are clipped to safe ranges at inference time. ([`app.py`, lines 264-299](app.py#L264-L299)).
+  - Missing or invalid values are replaced with defaults; humidity and pH are clipped to safe ranges at inference time. ([`app.py`, lines 267-302](app.py#L267-L302)).
   - Synthetic dataset has no missingness; class-balanced (250 rows per disease).
-  - The app-facing JSON uses `pH`; before prediction, `compute_risk()` creates an internal `ph` compatibility key because the trained numeric model was built with the original Kaggle-style feature name. See `compute_risk()` at [`app.py`, lines 307-337](app.py#L307-L337).
+  - The app-facing JSON uses `pH`; before prediction, `compute_risk()` creates an internal `ph` compatibility key because the trained numeric model was built with the original Kaggle-style feature name. See `compute_risk()` at [`app.py`, lines 310-340](app.py#L310-L340).
 - Preprocessing steps:
   - `StandardScaler` on the nine numeric features.
   - `OneHotEncoder(handle_unknown="ignore")` on the disease class (15 levels).
@@ -187,10 +187,10 @@ features.
 | 3 | 3 hand-crafted (disease, env, risk) tuples in the same notebook | Text | 3 inputs | Prompt-comparison evaluation for the treatment-generation prompt |
 
 #### 2B.2 Preprocessing and Prompt Design
-- Text preprocessing: none. We rely on the LLM for extraction. The pipeline validates the LLM response in Python by stripping possible markdown code fences and parsing the result with `json.loads`. It then builds the required seven-key environment dictionary (`N`, `P`, `K`, `temperature`, `humidity`, `pH`, `rainfall`), fills missing or invalid values with documented defaults, casts values to floats, and clips only `humidity` and `pH` to safe inference ranges ([`app.py`, lines 137-143](app.py#L137-L143) and [`app.py`, lines 264-299](app.py#L264-L299)).
+- Text preprocessing: none. We rely on the LLM for extraction. The pipeline validates the LLM response in Python by stripping possible markdown code fences and parsing the result with `json.loads`. It then builds the required seven-key environment dictionary (`N`, `P`, `K`, `temperature`, `humidity`, `pH`, `rainfall`), fills missing or invalid values with documented defaults, casts values to floats, and clips only `humidity` and `pH` to safe inference ranges ([`app.py`, lines 137-143](app.py#L137-L143) and [`app.py`, lines 267-302](app.py#L267-L302)).
 - Prompt design:
-  - **Extraction prompt (deployed)** — `EXTRACT_SYSTEM` at [`app.py`, lines 252-261](app.py#L252-L261). System message explicitly lists the seven required JSON keys *and* gives a documented default per key (`N=70, P=50, K=50, temperature=22, humidity=70, pH=6.5, rainfall=80`) so the final extracted dictionary can be completed consistently.
-  - **Treatment-generation prompt (deployed)** — `TREATMENT_SYSTEM` at [`app.py`, lines 344-353](app.py#L344-L353). Instructs the LLM to *explain* the prediction (not recompute), produce three actions scaled to the risk category (urgent if High, preventive if Low), reference weather, and include a disclaimer. JSON-only output (`{"summary": "..."}`).
+  - **Extraction prompt (deployed)** — `EXTRACT_SYSTEM` at [`app.py`, lines 255-264](app.py#L255-L264). System message explicitly lists the seven required JSON keys *and* gives a documented default per key (`N=70, P=50, K=50, temperature=22, humidity=70, pH=6.5, rainfall=80`) so the final extracted dictionary can be completed consistently.
+  - **Treatment-generation prompt (deployed)** — `TREATMENT_SYSTEM` at [`app.py`, lines 347-356](app.py#L347-L356). Instructs the LLM to *explain* the prediction (not recompute), produce three actions scaled to the risk category (urgent if High, preventive if Low), reference weather, and include a disclaimer. JSON-only output (`{"summary": "..."}`).
 
 #### 2B.3 Approach Selection
 - Approach used: prompt engineering on top of a closed-source LLM (`gpt-4o-mini`), with JSON-only prompting and Python-side parsing/validation. Same model is used for the OpenAI-vision comparison in the CV block.
@@ -300,14 +300,14 @@ Best weighted-F1 checkpoint: **epoch 2**. Epoch 3 had the lowest eval_loss and n
 
 **Vision model comparison summary (custom ViT vs CLIP vs OpenAI vision).**
 The three vision models are run on every uploaded image in
-`run_pipeline()` at [`app.py`, lines 466-519](app.py#L466-L519) and shown
+`run_pipeline()` at [`app.py`, lines 469-522](app.py#L469-L522) and shown
 side-by-side in the *Vision model comparison* tab of the app:
 
 | Model | Type | Where defined | Role |
 |---|---|---|---|
 | `tashiten/plant-disease-vit` | Custom fine-tune (ViT-base, 15 classes) | `cv_predict()` at [`app.py`, lines 198-202](app.py#L198-L202) | **Primary** — its top-1 label is what feeds the numeric model and the LLM treatment prompt |
 | `openai/clip-vit-large-patch14` | Open-source zero-shot | `clip_predict()` at [`app.py`, lines 205-209](app.py#L205-L209) | Baseline that has never seen PlantVillage — sanity check |
-| OpenAI `gpt-4o-mini` vision | Closed-source LLM with vision | `openai_vision_predict()` at [`app.py`, lines 212-245](app.py#L212-L245) | Independent expert opinion in JSON form |
+| OpenAI `gpt-4o-mini` vision | Closed-source LLM with vision | `openai_vision_predict()` at [`app.py`, lines 212-248](app.py#L212-L248) | Independent expert opinion in JSON form |
 
 Qualitative observations from the deployed app:
 - On the *Tomato Late_blight* example, the **custom ViT is sometimes wrong**
@@ -409,7 +409,7 @@ Evidence for selected bonus items:
 
 **More than two data sources used with clear added value.** Three independent, mutually distinct sources contribute: (a) PlantVillage Kaggle dataset for images, (b) Kaggle Crop Recommendation dataset's *schema and feature ranges* for the numeric block, (c) Agrios *Plant Pathology* / UMass Extension bulletins for the per-disease optimum/tolerance windows that make the synthetic numeric dataset agronomically plausible. Removing any one of these would degrade a different part of the pipeline.
 
-**A core section is done exceptionally well — block integration.** All three blocks are technically integrated rather than concatenated: the CV class becomes a one-hot feature of the numeric model; the numeric output becomes a structured input to the second LLM prompt; the LLM-extracted JSON is the only path by which user weather/soil values ever reach the numeric model. The full chain is implemented in `run_pipeline()` at [`app.py`, lines 466-519](app.py#L466-L519) and exposed as a single Gradio interaction.
+**A core section is done exceptionally well — block integration.** All three blocks are technically integrated rather than concatenated: the CV class becomes a one-hot feature of the numeric model; the numeric output becomes a structured input to the second LLM prompt; the LLM-extracted JSON is the only path by which user weather/soil values ever reach the numeric model. The full chain is implemented in `run_pipeline()` at [`app.py`, lines 469-522](app.py#L469-L522) and exposed as a single Gradio interaction.
 
 **Extended evaluation.** Beyond the minimum: per-epoch CV metrics, per-disease MAE/max-error table for the numeric model, two-prompt comparison on **each** of the two LLM calls (so four prompts evaluated rather than the required one comparison), a three-way custom-ViT/CLIP/OpenAI panel in the deployed app for qualitative comparison on every diagnosis, and an honest discussion of the small-training-set limitation in §2C.5.
 
