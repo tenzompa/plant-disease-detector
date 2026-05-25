@@ -45,32 +45,27 @@ OPENAI_MODEL     = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 NUMERIC_MODEL    = Path("models/disease_risk_model.pkl")
 NUMERIC_META     = Path("models/numeric_feature_columns.json")
 
+VIT_TITLE  = "Custom ViT (fine-tuned on PlantVillage)"
+CLIP_TITLE = "CLIP zero-shot (openai/clip-vit-large-patch14)"
+
 # Use GPU if available, otherwise CPU.
 HF_DEVICE = 0 if torch.cuda.is_available() else -1
 print(f"[startup] Hugging Face device: {'cuda:0' if HF_DEVICE == 0 else 'cpu'}")
 
-# Compatibility helpers for different Gradio versions.
-# Newer Gradio supports render_children on gr.Tab.
+# Gradio version compatibility — newer Gradio supports render_children on gr.Tab.
 TAB_RENDER_KW = (
     {"render_children": True}
     if "render_children" in inspect.signature(gr.Tab.__init__).parameters
     else {}
 )
 
-# Newer Gradio supports height on gr.JSON.
-JSON_HEIGHT_KW = (
-    {"height": 220}
-    if "height" in inspect.signature(gr.JSON.__init__).parameters
-    else {}
-)
-
 # Cost safety: cap OpenAI calls per process to avoid runaway billing.
 # Each "Diagnose" click in the UI uses 3 calls. Default cap = 60 clicks.
-OPENAI_CALL_CAP  = int(os.getenv("OPENAI_CALL_CAP", "180"))
+OPENAI_CALL_CAP = int(os.getenv("OPENAI_CALL_CAP", "180"))
 _openai_call_count = 0
 
 
-def _check_openai_budget():
+def _check_openai_budget() -> None:
     global _openai_call_count
     if _openai_call_count >= OPENAI_CALL_CAP:
         raise RuntimeError(
@@ -122,6 +117,7 @@ clip_detector = pipeline(
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _client() -> OpenAI:
     key = os.getenv("OPENAI_API_KEY", "").strip()
     if not key:
@@ -134,7 +130,8 @@ def _client() -> OpenAI:
 def _image_to_data_url(image_path: str) -> str:
     mime, _ = mimetypes.guess_type(image_path)
     mime = mime or "image/jpeg"
-    return f"data:{mime};base64,{base64.b64encode(Path(image_path).read_bytes()).decode()}"
+    encoded = base64.b64encode(Path(image_path).read_bytes()).decode()
+    return f"data:{mime};base64,{encoded}"
 
 
 def _parse_json(text: str) -> dict:
@@ -158,7 +155,6 @@ def _normalise_to_known(label: str) -> str:
 
     # Try a fuzzy contains lookup with different separator conventions.
     label_norm = label.replace(",_bell", "").replace("(maize)", "").replace("_", "")
-
     for known in KNOWN_DISEASE_LBLS:
         if known.replace("_", "") == label_norm:
             return known
@@ -176,9 +172,28 @@ def _normalise_to_known(label: str) -> str:
     return label
 
 
+def _pretty_json(value) -> str:
+    """Render dictionaries/lists as readable JSON text (used inside Textboxes)."""
+    try:
+        return json.dumps(value, indent=2, ensure_ascii=False)
+    except Exception:
+        return str(value)
+
+
+def _escape_html(value: str) -> str:
+    """Escape text before injecting it into HTML outputs."""
+    return (
+        str(value)
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
+
+
 # ---------------------------------------------------------------------------
 # Vision block
 # ---------------------------------------------------------------------------
+
 
 def cv_predict(image_path: str) -> dict:
     """Run the fine-tuned ViT and return the top-3 (label, score) pairs."""
@@ -240,8 +255,8 @@ EXTRACT_SYSTEM = (
     "seven keys with numeric values (use a reasonable default if the user did "
     "not specify a particular field): "
     "{\"N\": ppm, \"P\": ppm, \"K\": ppm, \"temperature\": Celsius, "
-    "\"humidity\": percent, \"ph\": float, \"rainfall\": mm_per_month}. "
-    "Defaults if missing: N=70, P=50, K=50, temperature=22, humidity=70, ph=6.5, rainfall=80. "
+    "\"humidity\": percent, \"pH\": float, \"rainfall\": mm_per_month}. "
+    "Defaults if missing: N=70, P=50, K=50, temperature=22, humidity=70, pH=6.5, rainfall=80. "
     "Return only JSON, no markdown."
 )
 
@@ -261,7 +276,8 @@ def extract_conditions(user_text: str) -> dict:
 
     parsed = _parse_json(resp.choices[0].message.content)
 
-    # Coerce + clip to safe ranges.
+    # Coerce + clip to safe ranges. The app displays/uses "pH" externally.
+    # For backwards compatibility, also accept older LLM outputs that use "ph".
     out = {}
     for k, default in [
         ("N", 70),
@@ -269,17 +285,17 @@ def extract_conditions(user_text: str) -> dict:
         ("K", 50),
         ("temperature", 22),
         ("humidity", 70),
-        ("ph", 6.5),
+        ("pH", 6.5),
         ("rainfall", 80),
     ]:
         try:
-            out[k] = float(parsed.get(k, default))
+            value = parsed.get("pH", parsed.get("ph", default)) if k == "pH" else parsed.get(k, default)
+            out[k] = float(value)
         except Exception:
             out[k] = default
 
     out["humidity"] = float(np.clip(out["humidity"], 0, 100))
-    out["ph"]       = float(np.clip(out["ph"], 3.5, 9.5))
-
+    out["pH"]       = float(np.clip(out["pH"], 3.5, 9.5))
     return out
 
 
@@ -287,32 +303,37 @@ def extract_conditions(user_text: str) -> dict:
 # Numeric risk
 # ---------------------------------------------------------------------------
 
+
 def compute_risk(env: dict, disease_label: str) -> tuple[float, str]:
     disease = _normalise_to_known(disease_label)
     crop = disease.split("___")[0] if "___" in disease else "Tomato"
 
-    thi = env["temperature"] - (0.55 - 0.0055 * env["humidity"]) * (env["temperature"] - 14.5)
-    n_balance = env["N"] - CROP_N_OPT.get(crop, 80)
+    # The app-facing JSON uses "pH". The trained numeric model may still expect
+    # the original Kaggle-style feature name "ph", so keep both keys here.
+    model_env = dict(env)
+    if "pH" in model_env:
+        model_env["ph"] = model_env["pH"]
+    elif "ph" in model_env:
+        model_env["pH"] = model_env["ph"]
+
+    thi = model_env["temperature"] - (0.55 - 0.0055 * model_env["humidity"]) * (model_env["temperature"] - 14.5)
+    n_balance = model_env["N"] - CROP_N_OPT.get(crop, 80)
 
     row = {
-        **env,
+        **model_env,
         "temp_humidity_index": thi,
         "n_balance": n_balance,
         "disease": disease,
     }
-
     X = pd.DataFrame([row])[ALL_FEATURE_COLS]
 
-    score = float(risk_model.predict(X)[0])
-    score = float(np.clip(score, 0, 100))
-
+    score = float(np.clip(float(risk_model.predict(X)[0]), 0, 100))
     if score < 35:
         cat = "Low"
     elif score < 65:
         cat = "Medium"
     else:
         cat = "High"
-
     return score, cat
 
 
@@ -361,7 +382,7 @@ def treatment_plan(disease: str, env: dict, score: float, category: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Diagnosis headline helper
+# Diagnosis headline + score-bar renderers
 # ---------------------------------------------------------------------------
 
 _RISK_COLORS = {"Low": "#2e7d32", "Medium": "#ed6c02", "High": "#c62828"}
@@ -371,7 +392,6 @@ def _diagnosis_markdown(disease_label: str, risk: float, category: str) -> str:
     """Compact, prominent summary shown at the top of the Diagnosis tab."""
     pretty = _short_label(disease_label)
     color = _RISK_COLORS.get(category, "#555")
-
     return (
         f"### 🩺 Detected disease: **{pretty}**\n"
         f"<span style=\"background:{color};color:white;padding:4px 10px;"
@@ -379,104 +399,123 @@ def _diagnosis_markdown(disease_label: str, risk: float, category: str) -> str:
     )
 
 
+def _format_scores_with_bars(pred: dict, title: str) -> str:
+    """Render ViT/CLIP model scores as compact green-themed cards with bars."""
+    if not pred:
+        return f"""
+        <div class="vision-card">
+            <div class="vision-chip">▱&nbsp; {_escape_html(title)}</div>
+            <div class="vision-empty">Waiting for diagnosis...</div>
+        </div>
+        """
+
+    items = list(pred.items())[:3]
+    top_label = _short_label(items[0][0])
+    rows = []
+
+    for label, score in items:
+        try:
+            pct = max(0.0, min(100.0, float(score) * 100.0))
+            rows.append(
+                f"""
+                <div class="vision-row">
+                    <div class="vision-row-head">
+                        <span class="vision-label">{_escape_html(_short_label(label))}</span>
+                        <span class="vision-dots"></span>
+                        <span class="vision-value">{pct:.0f}%</span>
+                    </div>
+                    <div class="vision-bar-bg">
+                        <div class="vision-bar-fill" style="width:{pct:.0f}%"></div>
+                    </div>
+                </div>
+                """
+            )
+        except Exception:
+            rows.append(f"<div>{_escape_html(label)}: {_escape_html(score)}</div>")
+
+    return f"""
+    <div class="vision-card">
+        <div class="vision-chip">▱&nbsp; {_escape_html(title)}</div>
+        <div class="vision-top">{_escape_html(top_label)}</div>
+        <div class="vision-top-bar"></div>
+        {''.join(rows)}
+    </div>
+    """
+
+
 # ---------------------------------------------------------------------------
 # End-to-end pipeline
 # ---------------------------------------------------------------------------
 
-def _pretty_json(value) -> str:
-    """Render dictionaries/lists as plain text instead of heavy JSON UI widgets."""
-    try:
-        return json.dumps(value, indent=2, ensure_ascii=False)
-    except Exception:
-        return str(value)
 
-
-def _format_scores(pred: dict) -> str:
-    """Render model score dictionaries as stable plain text for Gradio tabs."""
-    if not pred:
-        return "Waiting for diagnosis..."
-
-    lines = []
-    for label, score in pred.items():
-        try:
-            lines.append(f"{_short_label(label)}: {float(score) * 100:.2f}%")
-        except Exception:
-            lines.append(f"{label}: {score}")
-
-    return "\n".join(lines)
+def _pack(headline, vit_pred, clip_pred, openai_text, env_text,
+          risk=0.0, cat="Low", plan=""):
+    """Return the fixed 8-tuple Gradio expects, in the same component order."""
+    return (
+        headline,
+        _format_scores_with_bars(vit_pred or {}, VIT_TITLE),
+        _format_scores_with_bars(clip_pred or {}, CLIP_TITLE),
+        openai_text,
+        env_text,
+        round(float(risk), 1),
+        cat,
+        plan,
+    )
 
 
 def run_pipeline(image_path, user_text):
+    # No image — show placeholder.
     if image_path is None:
-        return (
+        return _pack(
             "⚠️ Please upload a leaf image to start.",
-            "Waiting for diagnosis...",
-            "Waiting for diagnosis...",
+            {}, {},
             "No image uploaded.",
             "No image uploaded.",
-            0.0,
-            "Low",
-            "",
         )
 
     if not user_text or not user_text.strip():
         user_text = "No environment specified."
 
-    # 1) Vision predictions
-    vit_pred = cv_predict(image_path)
-    clip_pred = clip_predict(image_path)
+    # 1) Vision predictions (image -> ViT, image -> CLIP, image -> OpenAI vision)
+    vit_pred    = cv_predict(image_path)
+    clip_pred   = clip_predict(image_path)
     openai_pred = openai_vision_predict(image_path)
-
     top_disease = max(vit_pred, key=vit_pred.get)
 
-    # 2) NLP extraction
+    # 2) NLP extraction (text -> 7-key JSON)
     try:
         env = extract_conditions(user_text)
     except Exception as exc:
-        env = {"error": str(exc)}
-        return (
-            "",
-            _format_scores(vit_pred),
-            _format_scores(clip_pred),
+        return _pack(
+            "", vit_pred, clip_pred,
             _pretty_json(openai_pred),
-            _pretty_json(env),
-            0.0,
-            "Low",
-            f"❌ Extraction error: {exc}",
+            _pretty_json({"error": str(exc)}),
+            plan=f"❌ Extraction error: {exc}",
         )
 
-    # 3) Numeric risk
+    # 3) Numeric risk (disease + env -> risk_score, category)
     try:
         risk, cat = compute_risk(env, top_disease)
     except Exception as exc:
-        return (
-            "",
-            _format_scores(vit_pred),
-            _format_scores(clip_pred),
+        return _pack(
+            "", vit_pred, clip_pred,
             _pretty_json(openai_pred),
             _pretty_json(env),
-            0.0,
-            "Low",
-            f"❌ Risk error: {exc}",
+            plan=f"❌ Risk error: {exc}",
         )
 
-    # 4) Treatment plan
+    # 4) Treatment plan (disease + risk + env -> natural-language plan)
     try:
         plan = treatment_plan(top_disease, env, risk, cat)
     except Exception as exc:
         plan = f"❌ Treatment error: {exc}"
 
-    headline = _diagnosis_markdown(top_disease, round(risk, 1), cat)
-
-    return (
-        headline,
-        _format_scores(vit_pred),
-        _format_scores(clip_pred),
+    return _pack(
+        _diagnosis_markdown(top_disease, round(risk, 1), cat),
+        vit_pred, clip_pred,
         _pretty_json(openai_pred),
         _pretty_json(env),
-        round(risk, 1),
-        cat,
-        plan,
+        risk=risk, cat=cat, plan=plan,
     )
 
 
@@ -538,10 +577,120 @@ body {
     max-height: 260px;
     overflow: auto;
 }
+
+/* Vision comparison cards: compact green-themed look */
+.vision-card {
+    background: #1f2937 !important;
+    border-radius: 8px !important;
+    padding: 10px 12px 10px 12px !important;
+    height: 205px !important;
+    min-height: 205px !important;
+    max-height: 205px !important;
+    color: #f3f4f6 !important;
+    box-sizing: border-box !important;
+    overflow: hidden !important;
+}
+
+.vision-chip {
+    display: inline-flex !important;
+    align-items: center !important;
+    max-width: 100% !important;
+    background: #16a34a !important;
+    color: #ffffff !important;
+    font-weight: 700 !important;
+    border-radius: 7px !important;
+    padding: 5px 9px !important;
+    margin-bottom: 7px !important;
+    font-size: 12px !important;
+    line-height: 1.1 !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: clip !important;
+    box-sizing: border-box !important;
+}
+
+.vision-top {
+    color: #f9fafb !important;
+    font-size: 26px !important;
+    line-height: 1.05 !important;
+    font-weight: 800 !important;
+    letter-spacing: 0.02em !important;
+    text-align: center !important;
+    margin: 3px 0 10px 0 !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+}
+
+.vision-top-bar {
+    width: 100% !important;
+    height: 4px !important;
+    background: #22c55e !important;
+    border-radius: 999px !important;
+    margin-bottom: 8px !important;
+}
+
+.vision-row {
+    margin-bottom: 7px !important;
+}
+
+.vision-row-head {
+    display: flex !important;
+    align-items: baseline !important;
+    gap: 7px !important;
+    color: #f3f4f6 !important;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
+    font-size: 14px !important;
+    line-height: 1.05 !important;
+}
+
+.vision-label {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.vision-dots {
+    flex: 1;
+    min-width: 30px;
+    border-bottom: 2px dotted rgba(148, 163, 184, 0.28);
+    transform: translateY(-3px);
+}
+
+.vision-value {
+    white-space: nowrap;
+    font-weight: 700;
+}
+
+.vision-bar-bg {
+    width: 100% !important;
+    height: 4px !important;
+    background: transparent !important;
+    border-radius: 999px !important;
+    overflow: hidden !important;
+    margin-top: 3px !important;
+}
+
+.vision-bar-fill {
+    height: 100%;
+    background: #22c55e;
+    border-radius: 999px;
+}
+
+.vision-empty {
+    min-height: 130px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    color: #d1d5db !important;
+}
 """
 
-with gr.Blocks(title="Plant Disease Detector") as demo:
-
+with gr.Blocks(
+    title="Plant Disease Detector",
+    theme=gr.themes.Soft(primary_hue="green", secondary_hue="green"),
+    css=CUSTOM_CSS,
+) as demo:
     gr.Markdown(
         """
         # 🌿 Plant Disease Detector
@@ -583,7 +732,6 @@ with gr.Blocks(title="Plant Disease Detector") as demo:
         # ----------------------- OUTPUT COLUMN ----------------------
         with gr.Column(scale=2, min_width=480):
             with gr.Tabs():
-
                 # ===== Tab 1 — Main diagnosis =====
                 with gr.Tab("🩺 Diagnosis", **TAB_RENDER_KW):
                     headline_md = gr.Markdown(
@@ -614,25 +762,15 @@ with gr.Blocks(title="Plant Disease Detector") as demo:
                     )
 
                     with gr.Row():
-                        vit_out = gr.Textbox(
-                            label="Custom ViT (fine-tuned on PlantVillage)",
-                            lines=6,
-                            value="Waiting for diagnosis...",
-                            interactive=False,
-                        )
+                        vit_out = gr.HTML(_format_scores_with_bars({}, VIT_TITLE))
+                        clip_out = gr.HTML(_format_scores_with_bars({}, CLIP_TITLE))
 
-                        clip_out = gr.Textbox(
-                            label="CLIP zero-shot (openai/clip-vit-large-patch14)",
-                            lines=6,
-                            value="Waiting for diagnosis...",
-                            interactive=False,
-                        )
-
-                    oai_out = gr.Textbox(
+                    oai_out = gr.Code(
                         label="OpenAI vision (gpt-4o-mini)",
-                        lines=8,
+                        language="json",
                         value="Waiting for diagnosis...",
                         interactive=False,
+                        lines=10,
                     )
 
                 # ===== Tab 3 — Pipeline details =====
@@ -643,11 +781,12 @@ with gr.Blocks(title="Plant Disease Detector") as demo:
                         "numeric risk model consumes."
                     )
 
-                    env_out = gr.Textbox(
+                    env_out = gr.Code(
                         label="Extracted environmental conditions",
-                        lines=8,
+                        language="json",
                         value="Waiting for diagnosis...",
                         interactive=False,
+                        lines=10,
                     )
 
     gr.Markdown("### 🧪 Example scenarios")
@@ -682,12 +821,4 @@ with gr.Blocks(title="Plant Disease Detector") as demo:
 
 
 if __name__ == "__main__":
-    try:
-        demo.launch(
-            theme=gr.themes.Soft(primary_hue="green", secondary_hue="amber"),
-            css=CUSTOM_CSS,
-            show_error=True,
-        )
-    except TypeError:
-        # Older Gradio: theme/css/show_error handling can differ.
-        demo.launch(show_error=True)
+    demo.launch(show_error=True)
