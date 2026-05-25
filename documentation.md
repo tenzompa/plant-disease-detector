@@ -38,7 +38,7 @@ Third (bonus) block:
 - Goal: Build one application that (a) classifies the disease from a leaf photo, (b) extracts environmental conditions from free user text, (c) returns a quantitative risk score, and (d) writes a natural-language treatment plan that adapts to both the disease and the risk.
 - Success criteria:
   - Vision model fine-tuned and pushed to Hugging Face (LN2 pattern).
-  - At least two iterations on the numeric model with concrete CV metrics (LN1 pattern).
+  - At least two iterations on the numeric model with concrete cross-validation metrics (LN1 pattern).
   - Two LLM calls (extraction + generation), each with a prompt comparison and JSON validation (LN3 pattern).
   - A live Hugging Face Space that runs the end-to-end pipeline on user input.
 
@@ -59,7 +59,16 @@ user free text ─► NLP-extract ─► env JSON ──────┘         
 disease class ────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-The integration is implemented in [`app.py`, lines 274-308](app.py#L274-L308).
+The integration is implemented in `run_pipeline()` at [`app.py`, lines 466-519](app.py#L466-L519).
+
+**Integration flow, explicit:**
+
+1. **image ➜ ViT disease prediction** — `cv_predict()` at [`app.py`, lines 198-202](app.py#L198-L202) returns the top-3 ViT disease scores; `run_pipeline()` at [`app.py`, line 483](app.py#L483) selects the top-1 disease label.
+
+2. **disease ➜ feature for numeric model** — the top-1 label becomes a one-hot column of the regression model (see `compute_risk()` at [`app.py`, lines 307-337](app.py#L307-L337)).
+3. **user text ➜ LLM-extracted environment values ➜ numeric model** — `extract_conditions()` at [`app.py`, lines 264-299](app.py#L264-L299) turns the free text into a 7-key JSON; those values become the numeric features.
+4. **disease + environment ➜ risk score** — the regression model returns a 0–100 risk and a Low/Medium/High category.
+5. **disease + risk score ➜ LLM treatment plan** — `treatment_plan()` at [`app.py`, lines 356-381](app.py#L356-L381) writes risk-scaled treatment actions.
 
 
 ---
@@ -72,22 +81,58 @@ The integration is implemented in [`app.py`, lines 274-308](app.py#L274-L308).
 
 | Entry | Source name or link | Type | Size | Role in this block |
 | --- | --- | --- | --- | --- |
-| 1 | Kaggle [Crop Recommendation Dataset](https://www.kaggle.com/datasets/atharvaingle/crop-recommendation-dataset) (Atharva Ingle) | Tabular soil + weather | 2 200 rows × 8 cols | Schema, feature names, realistic value ranges for `N, P, K, temperature, humidity, ph, rainfall` |
-| 2 | Agrios, *Plant Pathology* 5th ed.; UMass Extension disease bulletins | Domain literature | 15 per-disease profiles | Per-disease optimum/tolerance windows for temperature, humidity, pH, rainfall (used to generate `risk_score`) |
-| 3 | `data/plant_disease_risk_dataset.csv` (3 750 rows, deterministic, built by [`prepare_data.py`, lines 33-186](prepare_data.py#L33-L186)) | Tabular | 3 750 rows × 12 cols | Training set for the regression model |
+| 1 | Kaggle [Crop Recommendation Dataset](https://www.kaggle.com/datasets/atharvaingle/crop-recommendation-dataset) (Atharva Ingle, 2020) | Tabular soil + weather | 2 200 rows × 8 cols | Schema + realistic value ranges for the seven numeric features `N, P, K, temperature, humidity, ph, rainfall` (encoded in [`prepare_data.py`, lines 77-87](prepare_data.py#L77-L87)) |
+| 2 | Plant-pathology literature: Agrios, *Plant Pathology* 5th ed. (Elsevier, 2005), the [APS *Compendium of Tomato Diseases*](https://my.apsnet.org/APSStore/Products/COMPENDIUM-Tomato-Diseases-and-Pests-Second-Edition.aspx), and weather/disease-window summaries from the [University of Massachusetts Vegetable Program](https://ag.umass.edu/vegetable) extension bulletins | Domain literature | 15 per-disease profiles | Per-disease optimum and tolerance windows for temperature, humidity, pH, rainfall — encoded in `DISEASE_PROFILES` at [`prepare_data.py`, lines 51-70](prepare_data.py#L51-L70). These are the basis of the synthetic `risk_score`. |
+| 3 | `data/plant_disease_risk_dataset.csv` (3 750 rows, deterministic, built by [`prepare_data.py`, lines 141-165](prepare_data.py#L141-L165)) | Tabular | 3 750 rows × 12 cols | Final training set for the regression model |
+
+**Important limitation — synthetic risk dataset.** The `risk_score` target in
+`data/plant_disease_risk_dataset.csv` is **synthetic and literature-derived**,
+not measured real-world field data. For each disease class we encode the
+*optimum* environmental window from the published sources above as Gaussian
+weights (see `compute_risk()` at [`prepare_data.py`, lines 103-131](prepare_data.py#L103-L131))
+and sample environmental conditions uniformly from the Kaggle Crop
+Recommendation ranges. The model therefore demonstrates **integrated risk
+estimation** — i.e. that the CV output, the LLM-extracted environment and a
+regression model can be chained end-to-end — but it is **not a validated
+agronomic disease-severity model**, and the absolute risk numbers should not
+be relied on for real treatment decisions. A production version would
+re-train this block on measured severity records (e.g. USA AgWeather or
+Swiss Agroscope disease bulletins).
+
 
 #### 2A.2 Preprocessing and Features
 - Cleaning steps:
-  - Clip user-supplied values to safe ranges at inference time ([`app.py`, lines 223-242](app.py#L223-L242)).
+  - Missing or invalid values are replaced with defaults; humidity and pH are clipped to safe ranges at inference time. ([`app.py`, lines 264-299](app.py#L264-L299)).
   - Synthetic dataset has no missingness; class-balanced (250 rows per disease).
+  - The app-facing JSON uses `pH`; before prediction, `compute_risk()` creates an internal `ph` compatibility key because the trained numeric model was built with the original Kaggle-style feature name. See `compute_risk()` at [`app.py`, lines 307-337](app.py#L307-L337).
 - Preprocessing steps:
-  - `StandardScaler` on the nine numeric features
-  - `OneHotEncoder(handle_unknown="ignore")` on the disease class (15 levels)
-  - All wrapped in a `ColumnTransformer` ([`train_numeric_model.py`, lines 109-114](train_numeric_model.py#L109-L114))
+  - `StandardScaler` on the nine numeric features.
+  - `OneHotEncoder(handle_unknown="ignore")` on the disease class (15 levels).
+  - All wrapped in a `ColumnTransformer` at [`train_numeric_model.py`, lines 112-115](train_numeric_model.py#L112-L115).
 - Feature engineering and selection:
-  - `temp_humidity_index = T − (0.55 − 0.0055·H)·(T − 14.5)` — greenhouse THI proxy
-  - `n_balance = N − N_optimum(crop)` — distance from the crop's nitrogen optimum
-  - Implemented in [`train_numeric_model.py`, lines 75-82](train_numeric_model.py#L75-L82)
+  - `temp_humidity_index = T − (0.55 − 0.0055·H)·(T − 14.5)` — greenhouse THI proxy.
+  - `n_balance = N − N_optimum(crop)` — distance from the crop's nitrogen optimum.
+  - Implemented in `engineer()` at [`train_numeric_model.py`, lines 91-100](train_numeric_model.py#L91-L100).
+
+**EDA findings (numeric dataset).** Full plots in
+[`notebooks/01_numeric_eda_and_training.ipynb`](notebooks/01_numeric_eda_and_training.ipynb); headline findings:
+
+- **Class balance.** The numeric dataset is deliberately balanced — 250 rows per
+  disease (15 × 250 = 3 750 rows). The derived ordinal `risk_category` is
+  imbalanced because it depends on the random environment draw: ~45 % Low,
+  ~37 % Medium, ~18 % High. We therefore stratify the train/test split by
+  `disease` rather than by `risk_category`.
+- **Risk-score distribution.** Mean = 39.85, std = 25.09, range 0–100. The
+  distribution is right-skewed because the high-risk tail only fires when
+  several drivers (temperature, humidity, rainfall) are simultaneously close
+  to the disease's optimum window.
+- **Marginal correlations of raw features with `risk_score` are weak**
+  (|r| ≤ 0.18). This is expected: each disease has a *different* favourable
+  window — the same temperature can be high-risk for *Late_blight* (cool-wet)
+  and low-risk for *Bacterial_spot* (warm-wet). The relationship only
+  becomes strong when the model conditions on the disease class. This is
+  the empirical finding that motivates injecting the disease one-hot in
+  iteration 2 and explains why iteration 1 underfits.
 
 #### 2A.3 Model Selection
 - Models tested: `LinearRegression`, `RandomForestRegressor` (default), `RandomForestRegressor` (tuned), `HistGradientBoostingRegressor`
@@ -101,7 +146,17 @@ The integration is implemented in [`app.py`, lines 274-308](app.py#L274-L308).
 | 2 | Add CV output as feature + engineered features (**deployed**) | + `temp_humidity_index`, `n_balance`; one-hot encode `disease`; standard scale | RandomForestRegressor (n_est=300, d=14, leaf=3); HistGradientBoostingRegressor (max_iter=400, d=6, lr=0.06) | 5-fold CV RMSE: 8.99 / **6.41**; R² 0.87 / **0.94** | RMSE drops by ~73 %; R² up from 0.07 → 0.94 |
 | 3 | N/A — iteration 2 already meets the target on hold-out (R² = 0.939) so we did not run a third iteration | | | | |
 
-Full numbers in [`models/numeric_training_report.json`](models/numeric_training_report.json); iterations executed by [`train_numeric_model.py`, lines 35-148](train_numeric_model.py#L35-L148).
+Full numbers in [`models/numeric_training_report.json`](models/numeric_training_report.json); iterations executed by [`train_numeric_model.py`, lines 53-159](train_numeric_model.py#L53-L159).
+
+**Model comparison summary.**
+- *Linear Regression* (iteration 1, baseline): RMSE 24.60, R² 0.04 — clearly underfits.
+- *Random Forest* (iterations 1 + 2): RMSE 24.21 → 8.99, R² 0.07 → 0.87 after engineered features + disease one-hot.
+- *HistGradientBoosting* (iteration 2, **deployed**): RMSE **6.41**, R² **0.94** — best on every fold, smallest variance.
+
+HistGradientBoosting wins because it handles the highly interaction-driven
+`disease × weather` structure more parameter-efficiently than a deep Random
+Forest, and its leaf-binning is robust to the slight skew of the weather
+features.
 
 #### 2A.5 Evaluation and Error Analysis
 - Metrics used: RMSE, MAE, R², 5-fold `KFold(shuffle=True, random_state=42)` cross-validation, plus a 20 % hold-out test split stratified by `disease`.
@@ -111,7 +166,7 @@ Full numbers in [`models/numeric_training_report.json`](models/numeric_training_
 - Error patterns and likely causes:
   - Highest per-disease MAE on *Potato Late_blight* (6.12) and *Tomato Late_blight* (5.48) — both *Phytophthora infestans* species whose favourable windows overlap.
   - Healthy classes have the lowest MAE (~3.2) — their target is a tight low-risk band.
-  - Full per-disease table printed by [`train_numeric_model.py`, lines 150-177](train_numeric_model.py#L150-L177).
+  - Full per-disease table printed by `hold_out_evaluation()` at [`train_numeric_model.py`, lines 161-191](train_numeric_model.py#L161-L191).
 
 #### 2A.6 Integration with Other Block(s)
 - Inputs received from other block(s):
@@ -132,13 +187,13 @@ Full numbers in [`models/numeric_training_report.json`](models/numeric_training_
 | 3 | 3 hand-crafted (disease, env, risk) tuples in the same notebook | Text | 3 inputs | Prompt-comparison evaluation for the treatment-generation prompt |
 
 #### 2B.2 Preprocessing and Prompt Design
-- Text preprocessing: none. We rely on the LLM. The pipeline validates the model's response in Python: strip markdown fences, `json.loads`, assert the seven required keys, cast to floats, clip to safe ranges ([`app.py`, lines 114-120](app.py#L114-L120) and [`app.py`, lines 221-242](app.py#L221-L242)).
+- Text preprocessing: none. We rely on the LLM for extraction. The pipeline validates the LLM response in Python by stripping possible markdown code fences and parsing the result with `json.loads`. It then builds the required seven-key environment dictionary (`N`, `P`, `K`, `temperature`, `humidity`, `pH`, `rainfall`), fills missing or invalid values with documented defaults, casts values to floats, and clips only `humidity` and `pH` to safe inference ranges ([`app.py`, lines 137-143](app.py#L137-L143) and [`app.py`, lines 264-299](app.py#L264-L299)).
 - Prompt design:
-  - **Extraction prompt (deployed)** — `EXTRACT_SYSTEM` in [`app.py`, lines 213-219](app.py#L213-L219). System message explicitly lists the seven required JSON keys *and* gives a documented default per key (`N=70, P=50, K=50, temperature=22, humidity=70, pH=6.5, rainfall=80`) so the JSON is always complete.
-  - **Treatment-generation prompt (deployed)** — `TREATMENT_SYSTEM` in [`app.py`, lines 274-281](app.py#L274-L281). Instructs the LLM to *explain* the prediction (not recompute), produce three actions scaled to the risk category (urgent if High, preventive if Low), reference weather, and include a disclaimer. JSON-only output (`{"summary": "..."}`).
+  - **Extraction prompt (deployed)** — `EXTRACT_SYSTEM` at [`app.py`, lines 252-261](app.py#L252-L261). System message explicitly lists the seven required JSON keys *and* gives a documented default per key (`N=70, P=50, K=50, temperature=22, humidity=70, pH=6.5, rainfall=80`) so the final extracted dictionary can be completed consistently.
+  - **Treatment-generation prompt (deployed)** — `TREATMENT_SYSTEM` at [`app.py`, lines 344-353](app.py#L344-L353). Instructs the LLM to *explain* the prediction (not recompute), produce three actions scaled to the risk category (urgent if High, preventive if Low), reference weather, and include a disclaimer. JSON-only output (`{"summary": "..."}`).
 
 #### 2B.3 Approach Selection
-- Approach used: prompt engineering on top of a closed-source LLM (`gpt-4o-mini`), with JSON-mode validation in Python. Same model is used for the OpenAI-vision comparison in the CV block.
+- Approach used: prompt engineering on top of a closed-source LLM (`gpt-4o-mini`), with JSON-only prompting and Python-side parsing/validation. Same model is used for the OpenAI-vision comparison in the CV block.
 - Alternatives considered:
   - Classical NER for parameter extraction — rejected because the variety of phrasing (degrees Celsius, percentage humidity, German/English mix) is exactly what an LLM handles natively.
   - Retrieval-augmented generation for treatment advice — rejected for v1 because the 15 PlantVillage diseases are well-covered by the LLM's training data; we can revisit if class coverage grows.
@@ -181,16 +236,39 @@ See *Comparison results* in [`notebooks/03_nlp_prompt_evaluation.ipynb`](noteboo
 | Entry | Source name or link | Type | Size | Role in this block |
 | --- | --- | --- | --- | --- |
 | 1 | Kaggle [PlantVillage dataset](https://www.kaggle.com/datasets/abdallahalidev/plantvillage-dataset) (Abdallah Ali Dev) | RGB leaf photos | 54 305 images, 38 classes | Source of training/test images for the 15-class subset |
-| 2 | 15-class subset under `data/plantvillage/color/` (filter in [`train_cv_model.py`, lines 86-90](train_cv_model.py#L86-L90)) | RGB | ~32 000 images | Filtered version of source 1 used for training |
-| 3 | Subsample of 67 images per class (1 005 images total) — `MAX_IMAGES_PER_CLASS=67` ([`train_cv_model.py`, lines 110-120](train_cv_model.py#L110-L120)) | RGB | 1 005 images | Actual training set for the deployed model (kept small for local Apple-MPS training) |
+| 2 | 15-class subset under `data/plantvillage/color/` (filter at [`train_cv_model.py`, lines 107-109](train_cv_model.py#L107-L109)) | RGB | ~32 000 images | Filtered version of source 1 used for training |
+| 3 | Subsample of 67 images per class (1 005 images total) — `MAX_IMAGES_PER_CLASS=67` ([`train_cv_model.py`, lines 111-122](train_cv_model.py#L111-L122)) | RGB | 1 005 images | Actual training set for the deployed model (kept small for local Apple-MPS training) |
 
 #### 2C.2 Preprocessing and Augmentation
 - Image preprocessing:
   - `Image.open(...).convert("RGB")` — convert RGBA/grayscale to RGB.
   - `AutoImageProcessor.from_pretrained("google/vit-base-patch16-224")` — resize to 224×224 and apply ImageNet normalization.
-  - Implemented in [`train_cv_model.py`, lines 134-141](train_cv_model.py#L134-L141).
+  - Implemented in `transform()` at [`train_cv_model.py`, lines 140-144](train_cv_model.py#L140-L144).
 - Augmentation strategy:
   - The deployed model uses the ViT processor's standard resize/normalize. The training script's docstring documents an optional richer augmentation set (`RandomResizedCrop`, `RandomHorizontalFlip`, `ColorJitter`) that we have validated but did not need for the 1 005-image run; the val-loss curve was still falling at epoch 3, indicating the model is not memorizing.
+
+**EDA findings (image dataset).** Full plots and class-balance tables in
+[`notebooks/02_cv_eda_and_training.ipynb`](notebooks/02_cv_eda_and_training.ipynb); headline findings:
+
+- **Class balance is uneven on the 15-class subset.** Counts per class in the
+  raw PlantVillage corpus range from ~150 images (Apple Black Rot) up to
+  ~1 900 (Tomato Yellow Leaf Curl Virus, which we exclude). After the
+  `MAX_IMAGES_PER_CLASS=67` cap each class is balanced to 67 training
+  images — this removes the imbalance for training but limits the absolute
+  ceiling of achievable F1.
+- **Visual similarity within crop families.** Healthy variants of Tomato,
+  Potato and Pepper look very similar; the model learns crop-level shape
+  cues in addition to colour. The two *Phytophthora infestans* species
+  (Tomato Late_blight and Potato Late_blight) are nearly indistinguishable
+  on the leaf alone — this is the dominant off-diagonal cell in the
+  confusion matrix and is exactly the case where the numeric block's risk
+  estimate downstream-corrects the user advice.
+- **Lab-bias limitation of PlantVillage.** All images were photographed
+  under uniform indoor lighting on a neutral background. A leaf photo
+  taken outdoors with a phone (more shadow, more clutter, different white
+  balance) is *out of distribution* for the deployed model. The
+  three-model panel (ViT + CLIP + OpenAI) in the app surfaces this
+  weakness — when the three disagree, the user is warned by construction.
 
 #### 2C.3 Model Selection
 - Vision model(s) used:
@@ -207,7 +285,7 @@ See *Comparison results* in [`notebooks/03_nlp_prompt_evaluation.ipynb`](noteboo
 | Iteration | Objective | Key changes | Model(s) used | Main metric | Change vs previous |
 | --- | --- | --- | --- | --- | --- |
 | 1 | Baseline (epoch 1 of the same run) | 1 epoch, no checkpoint selection | `google/vit-base-patch16-224` | Val accuracy 0.896, weighted F1 0.900 | — |
-| 2 | Full fine-tune, best of 3 epochs — **deployed** | full ViT fine-tune for 3 epochs, `load_best_model_at_end="f1"` on MPS GPU | same backbone, bs=8, lr=3e-4 | Val accuracy **0.950**, weighted F1 **0.951** | +0.054 accuracy, +0.051 F1 |
+| 2 | Full fine-tune, best of 3 epochs — **deployed** | full ViT fine-tune for 3 epochs on MPS GPU; best checkpoint selected by validation metric | same backbone, bs=8, lr=3e-4 | Val accuracy **0.950**, weighted F1 **0.951** | +0.054 accuracy, +0.051 F1 |
 | 3 | (Optional) ViT vs CLIP vs OpenAI comparison panel — runs at inference | Side-by-side top-3 predictions on the same image | + `openai/clip-vit-large-patch14`, + `gpt-4o-mini` vision | Qualitative (see §2C.5) | shows three-model agreement / disagreement to the user |
 
 Per-epoch metrics for iteration 2 (from `models/cv_training_report.json`):
@@ -218,7 +296,31 @@ Per-epoch metrics for iteration 2 (from `models/cv_training_report.json`):
 | 2 | 0.1368 | 0.2052 | 0.9502 | 0.9539 | 0.9502 | 0.9507 |
 | 3 | 0.0121 | 0.1720 | 0.9502 | 0.9534 | 0.9502 | 0.9505 |
 
-Best checkpoint: **epoch 3** (lowest eval_loss). Training: 3 min 44 s on Apple MPS.
+Best weighted-F1 checkpoint: **epoch 2**. Epoch 3 had the lowest eval_loss and nearly identical weighted F1. Training: 3 min 44 s on Apple MPS.
+
+**Vision model comparison summary (custom ViT vs CLIP vs OpenAI vision).**
+The three vision models are run on every uploaded image in
+`run_pipeline()` at [`app.py`, lines 466-519](app.py#L466-L519) and shown
+side-by-side in the *Vision model comparison* tab of the app:
+
+| Model | Type | Where defined | Role |
+|---|---|---|---|
+| `tashiten/plant-disease-vit` | Custom fine-tune (ViT-base, 15 classes) | `cv_predict()` at [`app.py`, lines 198-202](app.py#L198-L202) | **Primary** — its top-1 label is what feeds the numeric model and the LLM treatment prompt |
+| `openai/clip-vit-large-patch14` | Open-source zero-shot | `clip_predict()` at [`app.py`, lines 205-209](app.py#L205-L209) | Baseline that has never seen PlantVillage — sanity check |
+| OpenAI `gpt-4o-mini` vision | Closed-source LLM with vision | `openai_vision_predict()` at [`app.py`, lines 212-245](app.py#L212-L245) | Independent expert opinion in JSON form |
+
+Qualitative observations from the deployed app:
+- On the *Tomato Late_blight* example, the **custom ViT is sometimes wrong**
+  (predicts *Early blight*) while CLIP and OpenAI both correctly call
+  *Late blight*. The numeric model still computes the correct risk
+  because the *crop* part of the disease label is preserved either way.
+- On the *Tomato healthy* example, the **custom ViT is correct** at 100 %
+  confidence while CLIP and OpenAI mis-classify as *Leaf Mold*. CLIP and
+  OpenAI have never been trained on PlantVillage healthy-leaf photos
+  specifically.
+- This bidirectional disagreement is what makes the 3-model panel
+  informative; if the three ever fully agree the user can be much more
+  confident in the headline diagnosis.
 
 #### 2C.5 Evaluation and Error Analysis
 - Metrics and/or visual checks:
@@ -307,10 +409,10 @@ Evidence for selected bonus items:
 
 **More than two data sources used with clear added value.** Three independent, mutually distinct sources contribute: (a) PlantVillage Kaggle dataset for images, (b) Kaggle Crop Recommendation dataset's *schema and feature ranges* for the numeric block, (c) Agrios *Plant Pathology* / UMass Extension bulletins for the per-disease optimum/tolerance windows that make the synthetic numeric dataset agronomically plausible. Removing any one of these would degrade a different part of the pipeline.
 
-**A core section is done exceptionally well — block integration.** All three blocks are technically integrated rather than concatenated: the CV class becomes a one-hot feature of the numeric model; the numeric output becomes a structured input to the second LLM prompt; the LLM-extracted JSON is the only path by which user weather/soil values ever reach the numeric model. The full chain is implemented in [`app.py`, lines 274-308](app.py#L274-L308) and exposed as a single Gradio interaction.
+**A core section is done exceptionally well — block integration.** All three blocks are technically integrated rather than concatenated: the CV class becomes a one-hot feature of the numeric model; the numeric output becomes a structured input to the second LLM prompt; the LLM-extracted JSON is the only path by which user weather/soil values ever reach the numeric model. The full chain is implemented in `run_pipeline()` at [`app.py`, lines 466-519](app.py#L466-L519) and exposed as a single Gradio interaction.
 
 **Extended evaluation.** Beyond the minimum: per-epoch CV metrics, per-disease MAE/max-error table for the numeric model, two-prompt comparison on **each** of the two LLM calls (so four prompts evaluated rather than the required one comparison), a three-way custom-ViT/CLIP/OpenAI panel in the deployed app for qualitative comparison on every diagnosis, and an honest discussion of the small-training-set limitation in §2C.5.
 
-**Ethics, bias, or fairness analysis.** Three concrete safeguards: (a) `OPENAI_CALL_CAP` per-process limit in [`app.py`, lines 41-54](app.py#L41-L54) (default 180 calls ≈ 60 user clicks) to make a runaway-spend incident impossible by accident; (b) OpenAI is only invoked on a user *Diagnose* click — no script in the repo iterates the dataset through OpenAI; (c) the generation prompt is required to end with a disclaimer, and the README/documentation explicitly warns that the recommendations are not a substitute for professional agronomic advice. Bias: the PlantVillage corpus was photographed under uniform laboratory lighting; the three-model panel in the app surfaces low-confidence predictions to the user instead of hiding them.
+**Ethics, bias, or fairness analysis.** Three concrete safeguards: (a) `OPENAI_CALL_CAP` per-process limit at [`app.py`, lines 64-75](app.py#L64-L75) (default 180 calls ≈ 60 user clicks) to make a runaway-spend incident impossible by accident; (b) OpenAI is only invoked on a user *Diagnose* click — no script in the repo iterates the dataset through OpenAI; (c) the generation prompt is required to end with a disclaimer, and the README/documentation explicitly warns that the recommendations are not a substitute for professional agronomic advice. Bias: the PlantVillage corpus was photographed under uniform laboratory lighting; the three-model panel in the app surfaces low-confidence predictions to the user instead of hiding them.
 
 **Creative or exceptional use case.** Most plant-disease apps stop at the class label. By combining a vision classifier with a literature-grounded numeric risk model and an LLM treatment writer that adapts to both the disease *and* the local environment, the project produces an output (a tailored, risk-scaled, weather-aware treatment plan in plain language) that no single block could produce alone — which is exactly the goal the course brief states for multi-block projects.
