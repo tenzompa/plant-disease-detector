@@ -146,7 +146,7 @@ Swiss Agroscope disease bulletins).
 | 2 | Add CV output as feature + engineered features (**deployed**) | + `temp_humidity_index`, `n_balance`; one-hot encode `disease`; standard scale | RandomForestRegressor (n_est=300, d=14, leaf=3); HistGradientBoostingRegressor (max_iter=400, d=6, lr=0.06) | 5-fold CV RMSE: 8.99 / **6.41**; R² 0.87 / **0.94** | RMSE drops by ~73 %; R² up from 0.07 → 0.94 |
 | 3 | N/A — iteration 2 already meets the target on hold-out (R² = 0.939) so we did not run a third iteration | | | | |
 
-Full numbers in [`models/numeric_training_report.json`](models/numeric_training_report.json); iterations executed by [`train_numeric_model.py`, lines 53-159](train_numeric_model.py#L53-L159).
+Full numbers in [`models/numeric_training_report.json`](models/numeric_training_report.json); iterations executed by [`train_numeric_model.py`, lines 53-154](train_numeric_model.py#L53-L154).
 
 **Model comparison summary.**
 - *Linear Regression* (iteration 1, baseline): RMSE 24.60, R² 0.04 — clearly underfits.
@@ -166,7 +166,7 @@ features.
 - Error patterns and likely causes:
   - Highest per-disease MAE on *Potato Late_blight* (6.12) and *Tomato Late_blight* (5.48) — both *Phytophthora infestans* species whose favourable windows overlap.
   - Healthy classes have the lowest MAE (~3.2) — their target is a tight low-risk band.
-  - Full per-disease table printed by `hold_out_evaluation()` at [`train_numeric_model.py`, lines 161-191](train_numeric_model.py#L161-L191).
+  - Full per-disease table printed by `hold_out_evaluation()` at [`train_numeric_model.py`, lines 161-186](train_numeric_model.py#L161-L186).
 
 #### 2A.6 Integration with Other Block(s)
 - Inputs received from other block(s):
@@ -237,7 +237,7 @@ See *Comparison results* in [`notebooks/03_nlp_prompt_evaluation.ipynb`](noteboo
 | --- | --- | --- | --- | --- |
 | 1 | Kaggle [PlantVillage dataset](https://www.kaggle.com/datasets/abdallahalidev/plantvillage-dataset) (Abdallah Ali Dev) | RGB leaf photos | 54 305 images, 38 classes | Source of training/test images for the 15-class subset |
 | 2 | 15-class subset under `data/plantvillage/color/` (filter at [`train_cv_model.py`, lines 107-109](train_cv_model.py#L107-L109)) | RGB | ~32 000 images | Filtered version of source 1 used for training |
-| 3 | Subsample of 67 images per class (1 005 images total) — `MAX_IMAGES_PER_CLASS=67` ([`train_cv_model.py`, lines 111-122](train_cv_model.py#L111-L122)) | RGB | 1 005 images | Actual training set for the deployed model (kept small for local Apple-MPS training) |
+| 3 | Subsample of 67 images per class (1 005 images total) — `MAX_IMAGES_PER_CLASS=67` ([`train_cv_model.py`, lines 111-122](train_cv_model.py#L111-L122)) | RGB | 1 005 images | Actual training set for the deployed model. Cap follows the **course directive to report results on a representative subset** rather than processing the full dataset (issued after API cost overruns in the course cohort). Two concrete effects: (a) no script in this repository ever iterates the full PlantVillage corpus through the OpenAI vision endpoint — only user-uploaded images at inference time reach the API, protected by `OPENAI_CALL_CAP`; (b) local MPS training completes in under 5 minutes without cloud GPU. |
 
 #### 2C.2 Preprocessing and Augmentation
 - Image preprocessing:
@@ -245,7 +245,7 @@ See *Comparison results* in [`notebooks/03_nlp_prompt_evaluation.ipynb`](noteboo
   - `AutoImageProcessor.from_pretrained("google/vit-base-patch16-224")` — resize to 224×224 and apply ImageNet normalization.
   - Implemented in `transform()` at [`train_cv_model.py`, lines 140-144](train_cv_model.py#L140-L144).
 - Augmentation strategy:
-  - The deployed model uses the ViT processor's standard resize/normalize. The training script's docstring documents an optional richer augmentation set (`RandomResizedCrop`, `RandomHorizontalFlip`, `ColorJitter`) that we have validated but did not need for the 1 005-image run; the val-loss curve was still falling at epoch 3, indicating the model is not memorizing.
+  - The deployed model uses the ViT processor's standard resize/normalize. The training script's docstring documents an optional richer augmentation set (`RandomResizedCrop`, `RandomHorizontalFlip`, `ColorJitter`) that was validated but not applied to the deployed run. The 67-images/class subset was chosen as the representative training set in line with the course guideline on API-cost-responsible use; the val-loss curve was still falling at epoch 3, confirming the model is not memorizing at this scale.
 
 **EDA findings (image dataset).** Full plots and class-balance tables in
 [`notebooks/02_cv_eda_and_training.ipynb`](notebooks/02_cv_eda_and_training.ipynb); headline findings:
@@ -307,7 +307,7 @@ side-by-side in the *Vision model comparison* tab of the app:
 |---|---|---|---|
 | `tashiten/plant-disease-vit` | Custom fine-tune (ViT-base, 15 classes) | `cv_predict()` at [`app.py`, lines 198-202](app.py#L198-L202) | **Primary** — its top-1 label is what feeds the numeric model and the LLM treatment prompt |
 | `openai/clip-vit-large-patch14` | Open-source zero-shot | `clip_predict()` at [`app.py`, lines 205-209](app.py#L205-L209) | Baseline that has never seen PlantVillage — sanity check |
-| OpenAI `gpt-4o-mini` vision | Closed-source LLM with vision | `openai_vision_predict()` at [`app.py`, lines 212-250](app.py#L212-L250) | Independent expert opinion in JSON form |
+| OpenAI `gpt-4o-mini` vision | Closed-source LLM with vision | `openai_vision_predict()` at [`app.py`, lines 212-245](app.py#L212-L245) | Independent expert opinion in JSON form |
 
 Qualitative observations from the deployed app:
 - On the *Tomato Late_blight* example, the **custom ViT is sometimes wrong**
@@ -330,7 +330,7 @@ Qualitative observations from the deployed app:
 - Error patterns and limitations:
   - Most confused classes are **Tomato Late_blight ↔ Potato Late_blight** (both *Phytophthora infestans*, nearly identical lesion morphology). On the deployed app, the Tomato late-blight example image is sometimes classified by the custom ViT as Tomato Early blight, while CLIP and OpenAI both correctly predict Late blight — visible in the three-column comparison panel of the screenshot (`screenshots/scenario_late_blight.png`).
   - The numeric block downstream-corrects: it receives the crop type implicitly through the one-hot disease feature, so the risk score remains in the right region even when the CV block confuses two Late-blight cousins.
-  - The 67-images-per-class training subset is the binding limitation; expanding to ~300 images per class would lift F1 toward the LN2-flower 0.96 level.
+  - The 67-images-per-class subset was chosen as a representative sample in line with the course guideline on responsible API use. It is also the main ceiling on accuracy; expanding to ~300 images per class would lift F1 toward the LN2-flower 0.96 level.
 
 #### 2C.6 Integration with Other Block(s)
 - Inputs received from other block(s):
@@ -413,6 +413,6 @@ Evidence for selected bonus items:
 
 **Extended evaluation.** Beyond the minimum: per-epoch CV metrics, per-disease MAE/max-error table for the numeric model, two-prompt comparison on **each** of the two LLM calls (so four prompts evaluated rather than the required one comparison), a three-way custom-ViT/CLIP/OpenAI panel in the deployed app for qualitative comparison on every diagnosis, and an honest discussion of the small-training-set limitation in §2C.5.
 
-**Ethics, bias, or fairness analysis.** Three concrete safeguards: (a) `OPENAI_CALL_CAP` per-process limit at [`app.py`, lines 64-75](app.py#L64-L75) (default 180 calls ≈ 60 user clicks) to make a runaway-spend incident impossible by accident; (b) OpenAI is only invoked on a user *Diagnose* click — no script in the repo iterates the dataset through OpenAI; (c) the generation prompt is required to end with a disclaimer, and the README/documentation explicitly warns that the recommendations are not a substitute for professional agronomic advice. Bias: the PlantVillage corpus was photographed under uniform laboratory lighting; the three-model panel in the app surfaces low-confidence predictions to the user instead of hiding them.
+**Ethics, bias, or fairness analysis.** Four concrete safeguards: (a) `OPENAI_CALL_CAP` per-process limit at [`app.py`, lines 64-75](app.py#L64-L75) (default 180 calls ≈ 60 user clicks) to make a runaway-spend incident impossible by accident; (b) OpenAI is only invoked on a user *Diagnose* click — no script in the repo iterates the dataset through OpenAI; (c) the CV training and NLP evaluation both use a **representative subset** (67 images/class; 5+3 hand-crafted NLP inputs) in direct compliance with the course directive to avoid processing full datasets through the API; (d) the generation prompt is required to end with a disclaimer, and the README/documentation explicitly warns that the recommendations are not a substitute for professional agronomic advice. Bias: the PlantVillage corpus was photographed under uniform laboratory lighting; the three-model panel in the app surfaces low-confidence predictions to the user instead of hiding them.
 
 **Creative or exceptional use case.** Most plant-disease apps stop at the class label. By combining a vision classifier with a literature-grounded numeric risk model and an LLM treatment writer that adapts to both the disease *and* the local environment, the project produces an output (a tailored, risk-scaled, weather-aware treatment plan in plain language) that no single block could produce alone — which is exactly the goal the course brief states for multi-block projects.
