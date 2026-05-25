@@ -12,7 +12,7 @@ https://huggingface.co/tashiten/plant-disease-vit    — pushed model
 models/cv_training_report.json                — final eval metrics
 
 Device auto-detection: CUDA → Apple MPS → CPU.
-Environment variables to keep local Mac training fast:
+Environment variables (cap follows course directive to use representative subsets):
     MAX_IMAGES_PER_CLASS=300        # default: all images (~ 1700/class)
     NUM_EPOCHS=3                    # default: 5
     BATCH_SIZE=8                    # default: 16
